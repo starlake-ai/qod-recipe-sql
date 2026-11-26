@@ -10,7 +10,7 @@ RECIPE_LABEL="plain SQL"
 SERVE_TARGET=out/warehouse.duckdb
 
 build_pipeline() {
-  :
+  uv run --quiet python pipeline/run.py
 }
 
 # shellcheck source=lib/recipe.sh

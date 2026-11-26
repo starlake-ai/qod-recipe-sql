@@ -1,0 +1,37 @@
+name: recipe
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly: qod@latest moves, and a recipe that stops working should be caught.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  recipe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Unit tests
+        run: uv run pytest -q
+      - name: Run the recipe
+        run: ./run.sh
+      - name: Run it again while the gateway is still up
+        run: ./run.sh
+      - name: Stop the gateway
+        if: always()
+        run: ./run.sh stop
+      - name: Keep the gateway log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qod-log-${{ matrix.os }}
+          path: out/qod.log
+          if-no-files-found: ignore
