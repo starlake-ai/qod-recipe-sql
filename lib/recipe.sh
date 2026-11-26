@@ -14,7 +14,9 @@ QOD_MIN_VERSION="0.15.1"
 RECIPE_PASSWORD="recipe-admin"
 # Manager REST, manager internal, FlightSQL edge, native Quack, embedded Postgres.
 RECIPE_PORTS="20900 20901 31338 9494 25432"
-READY_TIMEOUT_S="${READY_TIMEOUT_S:-300}"
+# The first run downloads QoD and its runtime (about 400 MB): allow a slow link.
+READY_TIMEOUT_S="${READY_TIMEOUT_S:-1800}"
+PROGRESS_EVERY_S="${PROGRESS_EVERY_S:-30}"
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -150,6 +152,9 @@ recipe_serve() {
     fi
     sleep 2
     waited=$((waited + 2))
+    if [ $((waited % PROGRESS_EVERY_S)) -eq 0 ]; then
+      say "  still starting (${waited}s). The first run downloads QoD and its runtime, about 400 MB; later runs take seconds. Ctrl-C stops it."
+    fi
   done
   trap - INT TERM
   say "QoD serving default_recipe_$RECIPE_TOOL on localhost:31338 (tenant=default, pool=bi)"

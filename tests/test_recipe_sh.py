@@ -200,3 +200,23 @@ def test_readme_states_min_version():
     lib = (ROOT / "lib" / "recipe.sh").read_text()
     version = lib.split('QOD_MIN_VERSION="', 1)[1].split('"', 1)[0]
     assert f"qod {version} or later" in (ROOT / "README.md").read_text()
+
+
+def test_slow_start_reports_progress(repo, tmp_path):
+    """A first run downloads QoD (hundreds of MB): the wait must say so instead
+    of sitting silent, and its default must leave room for a slow link."""
+    marker = f"slow-{tmp_path.name}"
+    stub = tmp_path / "qod-stub"
+    stub.write_text(f'#!/usr/bin/env bash\nexec -a "qod serve $2 --name $4 {marker}" sleep 300\n')
+    stub.chmod(0o755)
+    script = ("set -euo pipefail; source lib/recipe.sh; RECIPE_TOOL=t; SERVE_TARGET=out/x.duckdb; "
+              'echo "default timeout $READY_TIMEOUT_S"; '
+              "READY_TIMEOUT_S=4; PROGRESS_EVERY_S=2; uv() { return 1; }; mkdir -p out; recipe_serve")
+    r = subprocess.run(["bash", "-c", script], cwd=repo, env=dict(os.environ, QOD_CMD=str(stub)),
+                       capture_output=True, text=True, timeout=60)
+    subprocess.run(["pkill", "-f", marker])
+    out = r.stdout + r.stderr
+    assert r.returncode == 1, out
+    assert "still starting" in out
+    default = int(out.split("default timeout ", 1)[1].split()[0])
+    assert default >= 1800
