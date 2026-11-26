@@ -7,6 +7,7 @@ No framework is involved: if you can write the DuckDB file, QoD can serve it.
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- qod 0.15.1 or later: `./run.sh` runs it with `uvx qod@latest` and checks the version before doing anything
 - macOS or Linux (on Windows, use WSL2)
 - Ports 20900, 20901, 31338, 9494 and 25432 free on your machine
 

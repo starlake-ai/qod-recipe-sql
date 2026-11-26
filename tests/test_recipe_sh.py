@@ -48,6 +48,7 @@ def test_refuses_when_port_busy(repo, tmp_path):
         r = _run(repo, qod_cmd=_stub(tmp_path, "99.0.0"))
     assert r.returncode == 2, r.stdout + r.stderr
     assert "31338" in r.stderr
+    assert "./run.sh stop" in r.stderr
     assert not (repo / "out").exists()
 
 
@@ -86,7 +87,7 @@ def test_failed_start_stops_the_gateway(repo, tmp_path):
         #!/usr/bin/env bash
         if [ "$1" = "--version" ]; then echo "qod 99.0.0"; exit 0; fi
         exec sleep 300 {marker}
-        """).replace(f"exec sleep 300 {marker}", f"exec -a 'qod serve {marker}' sleep 300"))
+        """).replace(f"exec sleep 300 {marker}", f"exec -a \"qod serve $2 --name $4 {marker}\" sleep 300"))
     stub.chmod(0o755)
     script = (
         "set -euo pipefail; source lib/recipe.sh; "
@@ -115,3 +116,87 @@ def test_extra_preflight_runs_after_shared_checks(repo, tmp_path):
     assert r.returncode == 2, r.stdout + r.stderr
     assert "extra check refused" in r.stderr
     assert (repo / "out" / "keep").exists()
+
+
+def _sleeper(argv0):
+    return subprocess.Popen(["bash", "-c", f'exec -a "{argv0}" sleep 60'])
+
+
+def test_stop_ignores_other_qod_gateway(repo, tmp_path):
+    """A reused pid that belongs to someone else's qod gateway is not ours."""
+    other = _sleeper("uv tool uvx qod@latest serve ./sales.duckdb --name other")
+    try:
+        (repo / "out").mkdir()
+        (repo / "out" / "qod.pid").write_text(f"{other.pid}\n")
+        r = _run(repo, "stop", qod_cmd=_stub(tmp_path, "99.0.0"))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert other.poll() is None, "another gateway was signalled"
+        assert "stale" in (r.stdout + r.stderr)
+    finally:
+        other.kill()
+
+
+def test_serve_drops_readers_qod_env(repo, tmp_path):
+    """The gateway must not inherit the reader's QOD_* / PROXY_* settings."""
+    seen = tmp_path / "env.txt"
+    stub = tmp_path / "qod-stub"
+    stub.write_text(f"#!/usr/bin/env bash\nenv > {seen}\nexit 3\n")
+    stub.chmod(0o755)
+    script = ("set -euo pipefail; source lib/recipe.sh; RECIPE_TOOL=t; SERVE_TARGET=out/x.duckdb; "
+              "uv() { return 1; }; mkdir -p out; recipe_serve")
+    env = dict(os.environ, QOD_CMD=str(stub), QOD_DUCKLAKE_DATA_PATH="/elsewhere",
+               PROXY_PORT="1", QOD_ADMIN_USERNAME="root")
+    r = subprocess.run(["bash", "-c", script], cwd=repo, env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    got = seen.read_text()
+    for leaked in ("QOD_DUCKLAKE_DATA_PATH=", "PROXY_PORT=", "QOD_ADMIN_USERNAME="):
+        assert leaked not in got, leaked
+    assert f"QOD_DATA_DIR={repo}/out/.qod" in got
+    assert "PROXY_HOST=127.0.0.1" in got
+
+
+def test_interrupt_during_start_stops_gateway(repo, tmp_path):
+    """Ctrl-C while waiting for the gateway stops it instead of orphaning it."""
+    marker = f"intr-{tmp_path.name}"
+    stub = tmp_path / "qod-stub"
+    stub.write_text(f'#!/usr/bin/env bash\nexec -a "qod serve $2 --name $4 {marker}" sleep 300\n')
+    stub.chmod(0o755)
+    script = ("set -euo pipefail; source lib/recipe.sh; RECIPE_TOOL=t; SERVE_TARGET=out/x.duckdb; "
+              "READY_TIMEOUT_S=60; uv() { return 1; }; mkdir -p out; recipe_serve")
+    # Own session, like a terminal job: Ctrl-C reaches the whole foreground group.
+    p = subprocess.Popen(["bash", "-c", script], cwd=repo, env=dict(os.environ, QOD_CMD=str(stub)),
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    import signal
+    import time
+    for _ in range(50):
+        if subprocess.run(["pgrep", "-f", marker], capture_output=True).returncode == 0:
+            break
+        time.sleep(0.1)
+    started = time.monotonic()
+    os.killpg(p.pid, signal.SIGINT)
+    p.wait(timeout=60)
+    assert time.monotonic() - started < 20, "Ctrl-C was not acted on promptly"
+    time.sleep(0.5)
+    alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
+    if alive:
+        subprocess.run(["pkill", "-f", marker])
+    assert alive == "", "gateway left running after Ctrl-C"
+    assert p.returncode != 0
+
+
+def test_failed_check_prints_stop_hint(repo):
+    """When the query check fails the gateway is still up: say how to stop it."""
+    script = ("set -euo pipefail; source lib/recipe.sh; RECIPE_TOOL=t; RECIPE_LABEL=t; SERVE_TARGET=x; "
+              "recipe_stop() { :; }; recipe_preflight() { :; }; build_pipeline() { :; }; "
+              "recipe_serve() { :; }; uv() { [ \"$*\" != \"--quiet query.py --check\" ] && [ \"$*\" != \"run --quiet query.py --check\" ]; }; "
+              "recipe_main")
+    r = subprocess.run(["bash", "-c", script], cwd=repo, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "./run.sh stop" in (r.stdout + r.stderr)
+
+
+def test_readme_states_min_version():
+    lib = (ROOT / "lib" / "recipe.sh").read_text()
+    version = lib.split('QOD_MIN_VERSION="', 1)[1].split('"', 1)[0]
+    assert f"qod {version} or later" in (ROOT / "README.md").read_text()

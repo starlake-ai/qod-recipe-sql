@@ -56,7 +56,7 @@ recipe_preflight() {
   local p
   for p in $RECIPE_PORTS; do
     if port_busy "$p"; then
-      die 2 "port $p is already in use, probably by another QoD gateway. Stop it first (Ctrl-C in its terminal, or 'uvx qod@latest stop'), then run ./run.sh again."
+      die 2 "port $p is already in use. If another qod-recipe is running, run ./run.sh stop in its folder; if it is your own QoD gateway, stop it with Ctrl-C in its terminal. Then run ./run.sh again."
     fi
   done
   local line version
@@ -76,8 +76,10 @@ recipe_stop() {
   [ -f "$pidfile" ] || return 0
   pid=$(tr -dc '0-9' <"$pidfile")
   args=$(ps -o args= -p "${pid:-0}" 2>/dev/null || true)
-  case "$args" in
-    *qod*serve*) ;;
+  # Only this recipe's gateway carries --name recipe_<tool> (trailing space:
+  # recipe_sql must not match recipe_sqlmesh).
+  case "$args " in
+    *serve*"--name recipe_$RECIPE_TOOL "*) ;;
     *)
       rm -f "$pidfile"
       say "removed a stale out/qod.pid (process ${pid:-?} is not this recipe's gateway)"
@@ -103,14 +105,22 @@ recipe_stop() {
   say "stopped"
 }
 
-recipe_serve() {
-  mkdir -p out/.qod
-  # Never inherit a session, profile or control plane from the reader's own install.
-  unset QOD_TOKEN QOD_PROFILE QOD_MANAGER_URL QOD_PG_EMBEDDED_DATA_DIR QOD_PG_EMBEDDED_PORT
+# Exec the gateway with none of the reader's QOD_* or PROXY_* settings (data
+# paths, ports, admin name, session, profile...), then only the recipe's own.
+recipe_exec_gateway() {
+  local v
+  for v in $(env | awk -F= '/^(QOD|PROXY)_[A-Za-z0-9_]*=/ {print $1}'); do
+    unset "$v"
+  done
   export QOD_DATA_DIR="$PWD/out/.qod"
   export QOD_CONFIG_FILE="$PWD/out/.qod/config.toml"
   export QOD_ADMIN_PASSWORD="$RECIPE_PASSWORD"
   export PROXY_HOST=127.0.0.1 QOD_QUACK_HOST=127.0.0.1 QOD_ON_DEMAND_HOST=127.0.0.1 QOD_NODE_BIND=127.0.0.1
+  exec "$@"
+}
+
+recipe_serve() {
+  mkdir -p out/.qod
 
   say "starting Quack on Demand on $SERVE_TARGET (state in out/.qod, log in out/qod.log)..."
   local pid argv waited=0
@@ -120,10 +130,12 @@ recipe_serve() {
   # set -m gives the gateway its own process group, so recipe_stop can signal
   # all of it at once, as Ctrl-C would.
   set -m
-  "${argv[@]}" serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL" >out/qod.log 2>&1 </dev/null &
+  (recipe_exec_gateway "${argv[@]}" serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL") >out/qod.log 2>&1 </dev/null &
   pid=$!
   set +m
   echo "$pid" >out/qod.pid
+  # Ctrl-C while waiting: the gateway has its own process group, so stop it here.
+  trap 'recipe_stop; exit 130' INT TERM
 
   until uv run --quiet query.py --probe; do
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -139,6 +151,7 @@ recipe_serve() {
     sleep 2
     waited=$((waited + 2))
   done
+  trap - INT TERM
   say "QoD serving default_recipe_$RECIPE_TOOL on localhost:31338 (tenant=default, pool=bi)"
 }
 
@@ -175,6 +188,9 @@ recipe_main() {
   export QOD_HOST=127.0.0.1 QOD_PORT=31338 QOD_USER=admin QOD_PASSWORD="$RECIPE_PASSWORD"
   export QOD_TENANT=default QOD_POOL=bi QOD_SUPERUSER=true QOD_TLS=true QOD_TLS_VERIFY=false
   recipe_serve
-  uv run --quiet query.py --check
+  if ! uv run --quiet query.py --check; then
+    say "the gateway is still running: ./run.sh stop stops it, out/qod.log has its log" >&2
+    exit 1
+  fi
   recipe_connect_hint
 }
