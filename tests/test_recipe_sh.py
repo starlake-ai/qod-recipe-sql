@@ -75,3 +75,28 @@ def test_stop_ignores_foreign_pid(repo, tmp_path):
 def test_stop_without_gateway(repo, tmp_path):
     r = _run(repo, "stop", qod_cmd=_stub(tmp_path, "99.0.0"))
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_failed_start_stops_the_gateway(repo, tmp_path):
+    """recipe_serve must record the gateway's own pid (not a wrapper subshell),
+    so that a start that never becomes ready is stopped, not orphaned."""
+    marker = f"marker-{tmp_path.name}"
+    stub = tmp_path / "qod-stub"
+    stub.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        if [ "$1" = "--version" ]; then echo "qod 99.0.0"; exit 0; fi
+        exec sleep 300 {marker}
+        """).replace(f"exec sleep 300 {marker}", f"exec -a 'qod serve {marker}' sleep 300"))
+    stub.chmod(0o755)
+    script = (
+        "set -euo pipefail; source lib/recipe.sh; "
+        "RECIPE_TOOL=t; SERVE_TARGET=out/x.duckdb; READY_TIMEOUT_S=2; "
+        "uv() { return 1; }; mkdir -p out; recipe_serve"
+    )
+    r = subprocess.run(["bash", "-c", script], cwd=repo, env=dict(os.environ, QOD_CMD=str(stub)),
+                       capture_output=True, text=True, timeout=120)
+    alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
+    if alive:
+        subprocess.run(["pkill", "-f", marker])
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert alive == "", f"gateway left running after a failed start: {alive}"

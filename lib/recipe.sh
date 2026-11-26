@@ -109,9 +109,14 @@ recipe_serve() {
   export PROXY_HOST=127.0.0.1 QOD_QUACK_HOST=127.0.0.1 QOD_ON_DEMAND_HOST=127.0.0.1 QOD_NODE_BIND=127.0.0.1
 
   say "starting Quack on Demand on $SERVE_TARGET (state in out/.qod, log in out/qod.log)..."
-  local pid waited=0
+  local pid argv waited=0
+  read -r -a argv <<<"$QOD_CMD"
+  # Background the command itself, not the qod() function: a function would
+  # run in a subshell and $! would be that subshell, not the gateway.
+  # set -m gives the gateway its own process group, so recipe_stop can signal
+  # all of it at once, as Ctrl-C would.
   set -m
-  qod serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL" >out/qod.log 2>&1 </dev/null &
+  "${argv[@]}" serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL" >out/qod.log 2>&1 </dev/null &
   pid=$!
   set +m
   echo "$pid" >out/qod.pid
@@ -161,6 +166,7 @@ recipe_main() {
   mkdir out
   uv sync --quiet
   build_pipeline
+  say "$RECIPE_LABEL built customers_enriched and daily_revenue into $SERVE_TARGET"
   # query.py reads these: pin them so the reader's own QOD_* variables cannot leak in.
   export QOD_HOST=127.0.0.1 QOD_PORT=31338 QOD_USER=admin QOD_PASSWORD="$RECIPE_PASSWORD"
   export QOD_TENANT=default QOD_POOL=bi QOD_SUPERUSER=true QOD_TLS=true QOD_TLS_VERIFY=false
