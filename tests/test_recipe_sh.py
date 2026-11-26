@@ -262,3 +262,31 @@ def test_connect_hint_uses_loopback_address(repo):
     out = subprocess.run(["bash", "-c", script], cwd=repo, capture_output=True, text=True).stdout
     assert "127.0.0.1:31338" in out and "quack:127.0.0.1:9494" in out
     assert "localhost" not in out
+
+
+def _serve_argv(repo, tmp_path, version_line):
+    seen = tmp_path / "argv.txt"
+    stub = tmp_path / "qod-stub"
+    stub.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        if [ "$1" = "--version" ]; then echo "{version_line}"; exit 0; fi
+        echo "$@" > {seen}; exit 3
+        """))
+    stub.chmod(0o755)
+    script = ("set -euo pipefail; source lib/recipe.sh; RECIPE_TOOL=t; SERVE_TARGET=out/x.duckdb; "
+              "recipe_preflight; uv() { return 1; }; mkdir -p out; recipe_serve")
+    r = subprocess.run(["bash", "-c", script], cwd=repo, env=dict(os.environ, QOD_CMD=str(stub)),
+                       capture_output=True, text=True, timeout=60)
+    return r, seen.read_text() if seen.exists() else ""
+
+
+def test_serve_pins_the_cli_release(repo, tmp_path):
+    """A released CLI runs its own manager release: no GitHub API lookup of
+    'latest', which is rate limited for anonymous callers."""
+    r, argv = _serve_argv(repo, tmp_path, "qod 0.15.1")
+    assert "--version 0.15.1" in argv, r.stdout + r.stderr
+
+
+def test_serve_lets_a_dev_cli_resolve_latest(repo, tmp_path):
+    r, argv = _serve_argv(repo, tmp_path, "qod 0.15.2.dev0")
+    assert argv and "--version" not in argv, r.stdout + r.stderr

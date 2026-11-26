@@ -68,6 +68,7 @@ recipe_preflight() {
   if ! version_ge "$version" "$QOD_MIN_VERSION"; then
     die 2 "this recipe needs qod $QOD_MIN_VERSION or later, found '$version'. uvx may be holding an old copy: run 'uvx qod@latest --version' to refresh it."
   fi
+  RECIPE_QOD_VERSION=$version
   # A recipe's own prerequisites (Spark's JDK, say): define recipe_extra_preflight in run.sh.
   if declare -F recipe_extra_preflight >/dev/null; then
     recipe_extra_preflight
@@ -143,14 +144,23 @@ recipe_serve() {
   mkdir -p out/.qod
 
   say "starting Quack on Demand on $SERVE_TARGET (state in out/.qod, log in out/qod.log)..."
-  local pid argv waited=0
+  local pid argv waited=0 pin=""
   read -r -a argv <<<"$QOD_CMD"
+  # A released CLI runs its own manager release. Naming it skips qod's lookup
+  # of the latest release through the GitHub API, which is rate limited for
+  # anonymous callers (shared CI runners, office networks). A dev build has no
+  # matching release, so it keeps the lookup.
+  case "${RECIPE_QOD_VERSION:-}" in
+    "" | *dev* | *[!0-9.]*) ;;
+    *) pin="--version $RECIPE_QOD_VERSION" ;;
+  esac
   # Background the command itself, not the qod() function: a function would
   # run in a subshell and $! would be that subshell, not the gateway.
   # set -m gives the gateway its own process group, so recipe_stop can signal
   # all of it at once, as Ctrl-C would.
   set -m
-  (recipe_exec_gateway "${argv[@]}" serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL") >out/qod.log 2>&1 </dev/null &
+  # shellcheck disable=SC2086 # $pin splits into the flag and its value, or nothing
+  (recipe_exec_gateway "${argv[@]}" serve "$SERVE_TARGET" --name "recipe_$RECIPE_TOOL" $pin) >out/qod.log 2>&1 </dev/null &
   pid=$!
   set +m
   echo "$pid" >out/qod.pid
