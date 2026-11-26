@@ -12,11 +12,12 @@
 QOD_CMD="${QOD_CMD:-uvx qod@latest}"
 QOD_MIN_VERSION="0.15.1"
 RECIPE_PASSWORD="recipe-admin"
-# Manager REST, manager internal, FlightSQL edge, native Quack, embedded Postgres.
-RECIPE_PORTS="20900 20901 31338 9494 25432"
+# Manager REST, manager internal, FlightSQL edge, native Quack, embedded Postgres, node.
+RECIPE_PORTS="20900 20901 31338 9494 25432 21900"
 # The first run downloads QoD and its runtime (about 400 MB): allow a slow link.
 READY_TIMEOUT_S="${READY_TIMEOUT_S:-1800}"
 PROGRESS_EVERY_S="${PROGRESS_EVERY_S:-30}"
+STOP_TIMEOUT_S="${STOP_TIMEOUT_S:-90}"
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -91,20 +92,37 @@ recipe_stop() {
   say "stopping the recipe gateway (pid $pid)..."
   # The gateway runs in its own process group: signal the group, as Ctrl-C would.
   kill -INT -- "-$pid" 2>/dev/null || true
-  for i in $(seq 1 90); do
+  for i in $(seq 1 "$STOP_TIMEOUT_S"); do
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
   done
   if kill -0 "$pid" 2>/dev/null; then
     kill -TERM -- "-$pid" 2>/dev/null || true
-    sleep 5
+    for i in 1 2 3 4 5; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
   fi
+  if kill -0 "$pid" 2>/dev/null; then
+    printf 'error: the recipe gateway (pid %s) is still running. Stop it with: kill -KILL -- -%s\n' "$pid" "$pid" >&2
+    return 1
+  fi
+  # The embedded Postgres and the node can outlive the manager for a moment.
+  local p busy
   for i in $(seq 1 30); do
-    port_busy 20900 || port_busy 31338 || break
+    busy=""
+    for p in $RECIPE_PORTS; do
+      port_busy "$p" && busy="$p" && break
+    done
+    [ -z "$busy" ] && break
     sleep 1
   done
   rm -f "$pidfile"
-  say "stopped"
+  if [ -n "$busy" ]; then
+    say "stopped, but port $busy is still in use"
+  else
+    say "stopped"
+  fi
 }
 
 # Exec the gateway with none of the reader's QOD_* or PROXY_* settings (data
@@ -157,7 +175,7 @@ recipe_serve() {
     fi
   done
   trap - INT TERM
-  say "QoD serving default_recipe_$RECIPE_TOOL on localhost:31338 (tenant=default, pool=bi)"
+  say "QoD serving default_recipe_$RECIPE_TOOL on 127.0.0.1:31338 (tenant=default, pool=bi)"
 }
 
 recipe_connect_hint() {
@@ -165,11 +183,11 @@ recipe_connect_hint() {
   cat <<EOF
 
 Connect your own tool (user admin, password $p):
-  JDBC   jdbc:arrow-flight-sql://localhost:31338/?tenant=default&pool=bi&user=admin&superuser=true&useEncryption=true&disableCertificateVerification=true
-  ADBC   uri=grpc+tls://localhost:31338 (adbc_driver_flightsql; username, password, grpc headers tenant=default, pool=bi, superuser=true)
-  ODBC   Driver={Arrow Flight SQL ODBC Driver};Host=localhost;Port=31338;UseEncryption=true;DisableCertificateVerification=true;UID=admin;PWD=$p;SUPERUSER=true;TENANT=default;POOL=bi
-  DuckDB ATTACH 'quack:localhost:9494' AS qod (TYPE quack, TOKEN 'tenant=default&pool=bi&user=admin&password=$p&superuser=true');
-  Admin UI http://localhost:20900/ui/
+  JDBC   jdbc:arrow-flight-sql://127.0.0.1:31338/?tenant=default&pool=bi&user=admin&superuser=true&useEncryption=true&disableCertificateVerification=true
+  ADBC   uri=grpc+tls://127.0.0.1:31338 (adbc_driver_flightsql; username, password, grpc headers tenant=default, pool=bi, superuser=true)
+  ODBC   Driver={Arrow Flight SQL ODBC Driver};Host=127.0.0.1;Port=31338;UseEncryption=true;DisableCertificateVerification=true;UID=admin;PWD=$p;SUPERUSER=true;TENANT=default;POOL=bi
+  DuckDB ATTACH 'quack:127.0.0.1:9494' AS qod (TYPE quack, TOKEN 'tenant=default&pool=bi&user=admin&password=$p&superuser=true');
+  Admin UI http://127.0.0.1:20900/ui/
 
 Stop: ./run.sh stop    Clean up: rm -rf out
 EOF

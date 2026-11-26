@@ -24,8 +24,9 @@ def main() -> None:
     rows = [{c: (str(v) if c == "lifetime_value" else v) for c, v in zip(cols, r)} for r in cur.fetchall()]
     (ROOT / "expected").mkdir(exist_ok=True)
     (ROOT / "expected" / "top5.json").write_text(json.dumps(rows, indent=2) + "\n")
-    n = con.execute("SELECT count(*) FROM daily_revenue").fetchone()[0]
-    (ROOT / "expected" / "daily_revenue_rows.txt").write_text(f"{n}\n")
+    n, total = con.execute("SELECT count(*), sum(revenue) FROM daily_revenue").fetchone()
+    daily = {"rows": n, "total": f"{total:.2f}"}
+    (ROOT / "expected" / "daily_revenue.json").write_text(json.dumps(daily, indent=2) + "\n")
 
 
 if __name__ == "__main__":

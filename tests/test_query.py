@@ -35,3 +35,11 @@ def test_defaults_match_recipe_install(monkeypatch):
     assert (cfg.tenant, cfg.pool, cfg.password, cfg.port, cfg.user) == (
         "default", "bi", "recipe-admin", 31338, "admin")
     assert cfg.superuser and cfg.tls and not cfg.tls_verify
+
+
+def test_daily_check_compares_values():
+    want = {"rows": 82, "total": "15000.00"}
+    assert query.compare_daily(82, Decimal("15000.00"), want) == []
+    diff = query.compare_daily(82, Decimal("14999.99"), want)
+    assert diff and "15000.00" in diff[0]
+    assert query.compare_daily(81, Decimal("15000.00"), want)

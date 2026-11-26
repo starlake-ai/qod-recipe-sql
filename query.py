@@ -24,7 +24,7 @@ TOP5_SQL = (
     "SELECT customer_id, name, order_count, lifetime_value FROM customers_enriched "
     "ORDER BY lifetime_value DESC, customer_id LIMIT 5"
 )
-DAILY_COUNT_SQL = "SELECT count(*) AS n FROM daily_revenue"
+DAILY_SQL = "SELECT count(*) AS n, sum(revenue) AS total FROM daily_revenue"
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,18 @@ def compare(rows: list[dict], expected: list[dict]) -> list[str]:
     return diffs
 
 
+def compare_daily(rows: int, total, expected: dict) -> list[str]:
+    """Differences between the daily_revenue row count and revenue total the
+    gateway returned and expected/daily_revenue.json; empty when they match."""
+    diffs = []
+    if rows != expected["rows"]:
+        diffs.append(f"daily_revenue: expected {expected['rows']} rows, got {rows}")
+    got = f"{Decimal(str(total)):.2f}" if total is not None else "None"
+    if got != expected["total"]:
+        diffs.append(f"daily_revenue: expected a total of {expected['total']}, got {got}")
+    return diffs
+
+
 def _print_table(rows: list[dict]) -> None:
     if not rows:
         print("  (no rows)")
@@ -140,17 +152,16 @@ def main(argv: list[str]) -> int:
         if "--check" not in argv:
             return 0
         diffs = compare(rows, json.loads((ROOT / "expected" / "top5.json").read_text()))
-        n_daily = fetch(conn, DAILY_COUNT_SQL)[0]["n"]
-        want_daily = int((ROOT / "expected" / "daily_revenue_rows.txt").read_text())
-        if n_daily != want_daily:
-            diffs.append(f"daily_revenue: expected {want_daily} rows, got {n_daily}")
+        daily = fetch(conn, DAILY_SQL)[0]
+        diffs += compare_daily(daily["n"], daily["total"],
+                               json.loads((ROOT / "expected" / "daily_revenue.json").read_text()))
 
     if diffs:
         print("check FAILED:", file=sys.stderr)
         for d in diffs:
             print("  " + d, file=sys.stderr)
         return 1
-    print(f"check OK: top 5 matches expected/, daily_revenue has {n_daily} rows")
+    print(f"check OK: top 5 matches expected/, daily_revenue has {daily['n']} rows totalling {Decimal(str(daily['total'])):.2f}")
     return 0
 
 

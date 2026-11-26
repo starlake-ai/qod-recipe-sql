@@ -9,7 +9,7 @@ No framework is involved: if you can write the DuckDB file, QoD can serve it.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - qod 0.15.1 or later: `./run.sh` runs it with `uvx qod@latest` and checks the version before doing anything
 - macOS or Linux (on Windows, use WSL2)
-- Ports 20900, 20901, 31338, 9494 and 25432 free on your machine
+- Ports 20900, 20901, 21900, 31338, 9494 and 25432 free on your machine
 
 ## Run it
 
@@ -24,7 +24,7 @@ The first run downloads QoD and its runtime, which takes a few minutes. Later ru
 ```
 plain SQL built customers_enriched and daily_revenue into out/warehouse.duckdb
 starting Quack on Demand on out/warehouse.duckdb (state in out/.qod, log in out/qod.log)...
-QoD serving default_recipe_sql on localhost:31338 (tenant=default, pool=bi)
+QoD serving default_recipe_sql on 127.0.0.1:31338 (tenant=default, pool=bi)
 top 5 customers by lifetime value (via FlightSQL):
   customer_id | name         | order_count | lifetime_value
   ------------+--------------+-------------+---------------
@@ -33,7 +33,7 @@ top 5 customers by lifetime value (via FlightSQL):
   3           | Ines Okafor  | 6           | 952.20
   7           | Ines Rossi   | 6           | 764.95
   42          | Ben Kowalski | 5           | 761.50
-check OK: top 5 matches expected/, daily_revenue has 82 rows
+check OK: top 5 matches expected/, daily_revenue has 82 rows totalling 20662.20
 ```
 
 followed by connection strings for your own tools.
@@ -49,14 +49,14 @@ The tables did not move or change format: QoD serves the DuckDB file where it is
 
 ## Connect your own tool
 
-The gateway listens on `localhost` only. Log in as `admin` with the password `recipe-admin`, with tenant `default` and pool `bi`:
+The gateway listens on 127.0.0.1 only, so use that address rather than `localhost`, which some clients resolve to IPv6 first. Log in as `admin` with the password `recipe-admin`, with tenant `default` and pool `bi`:
 
 ```
-JDBC   jdbc:arrow-flight-sql://localhost:31338/?tenant=default&pool=bi&user=admin&superuser=true&useEncryption=true&disableCertificateVerification=true
-DuckDB ATTACH 'quack:localhost:9494' AS qod (TYPE quack, TOKEN 'tenant=default&pool=bi&user=admin&password=recipe-admin&superuser=true');
+JDBC   jdbc:arrow-flight-sql://127.0.0.1:31338/?tenant=default&pool=bi&user=admin&superuser=true&useEncryption=true&disableCertificateVerification=true
+DuckDB ATTACH 'quack:127.0.0.1:9494' AS qod (TYPE quack, TOKEN 'tenant=default&pool=bi&user=admin&password=recipe-admin&superuser=true');
 ```
 
-The admin UI is at http://localhost:20900/ui/. More clients (DBeaver, Power BI, Tableau, ADBC, ODBC) are covered in [Connecting clients](https://docs.starlake.ai/qod/connecting/clients).
+The admin UI is at http://127.0.0.1:20900/ui/. More clients (DBeaver, Power BI, Tableau, ADBC, ODBC) are covered in [Connecting clients](https://docs.starlake.ai/qod/connecting/clients).
 
 The password is published here on purpose: this gateway is a throwaway that only accepts connections from your own machine. Never reuse it for a gateway you keep.
 

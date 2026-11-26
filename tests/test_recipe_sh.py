@@ -220,3 +220,45 @@ def test_slow_start_reports_progress(repo, tmp_path):
     assert "still starting" in out
     default = int(out.split("default timeout ", 1)[1].split()[0])
     assert default >= 1800
+
+
+def test_stop_reports_a_gateway_that_survives(repo, tmp_path):
+    """If the gateway ignores INT and TERM, stop must say so and keep the pid
+    file, not print "stopped"."""
+    tool = (repo / "run.sh").read_text().split("RECIPE_TOOL=", 1)[1].split()[0]
+    stubborn = subprocess.Popen(
+        ["bash", "-c", f"trap '' INT TERM; exec -a 'qod serve x --name recipe_{tool}' sleep 120"],
+        start_new_session=True)
+    try:
+        (repo / "out").mkdir()
+        (repo / "out" / "qod.pid").write_text(f"{stubborn.pid}\n")
+        env = dict(os.environ, QOD_CMD=_stub(tmp_path, "99.0.0"), STOP_TIMEOUT_S="2")
+        r = subprocess.run(["bash", "run.sh", "stop"], cwd=repo, env=env,
+                           capture_output=True, text=True, timeout=60)
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, out
+        assert "still running" in out
+        assert "stopped\n" not in r.stdout
+        assert (repo / "out" / "qod.pid").exists()
+    finally:
+        stubborn.kill()
+
+
+def test_refuses_when_node_port_busy(repo, tmp_path):
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", 21900))
+        except OSError:
+            pytest.skip("port 21900 already in use on this machine")
+        s.listen()
+        r = _run(repo, qod_cmd=_stub(tmp_path, "99.0.0"))
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "21900" in r.stderr
+
+
+def test_connect_hint_uses_loopback_address(repo):
+    script = "source lib/recipe.sh; RECIPE_TOOL=t; recipe_connect_hint"
+    out = subprocess.run(["bash", "-c", script], cwd=repo, capture_output=True, text=True).stdout
+    assert "127.0.0.1:31338" in out and "quack:127.0.0.1:9494" in out
+    assert "localhost" not in out
