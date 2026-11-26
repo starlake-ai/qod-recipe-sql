@@ -3,9 +3,9 @@ name: recipe
 on:
   push:
   pull_request:
-  schedule:
-    # Weekly: qod@latest moves, and a recipe that stops working should be caught.
-    - cron: "0 6 * * 1"
+  # The weekly run against qod@latest lives in starlake-ai/qod
+  # (.github/workflows/recipes.yml): GitHub disables schedules in a repository
+  # with no commit for 60 days.
   workflow_dispatch:
 
 jobs:
@@ -17,8 +17,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
       - name: Unit tests
         run: uv run pytest -q
       - name: Run the recipe
@@ -30,8 +30,8 @@ jobs:
         run: ./run.sh stop
       - name: Keep the gateway log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: qod-log-${{ matrix.os }}
-          path: out/qod.log
+          name: recipe-logs-${{ matrix.os }}
+          path: out/*.log
           if-no-files-found: ignore
