@@ -100,3 +100,18 @@ def test_failed_start_stops_the_gateway(repo, tmp_path):
         subprocess.run(["pkill", "-f", marker])
     assert r.returncode == 1, r.stdout + r.stderr
     assert alive == "", f"gateway left running after a failed start: {alive}"
+
+
+def test_extra_preflight_runs_after_shared_checks(repo, tmp_path):
+    """A recipe-specific check (recipe_extra_preflight in run.sh) runs after the
+    shared checks pass, and its refusal leaves out/ alone."""
+    run_sh = repo / "run.sh"
+    run_sh.write_text(run_sh.read_text().replace(
+        "source lib/recipe.sh",
+        'recipe_extra_preflight() { die 2 "extra check refused"; }\nsource lib/recipe.sh'))
+    (repo / "out").mkdir()
+    (repo / "out" / "keep").write_text("x")
+    r = _run(repo, qod_cmd=_stub(tmp_path, "99.0.0"))
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "extra check refused" in r.stderr
+    assert (repo / "out" / "keep").exists()

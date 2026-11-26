@@ -65,6 +65,10 @@ recipe_preflight() {
   if ! version_ge "$version" "$QOD_MIN_VERSION"; then
     die 2 "this recipe needs qod $QOD_MIN_VERSION or later, found '$version'. uvx may be holding an old copy: run 'uvx qod@latest --version' to refresh it."
   fi
+  # A recipe's own prerequisites (Spark's JDK, say): define recipe_extra_preflight in run.sh.
+  if declare -F recipe_extra_preflight >/dev/null; then
+    recipe_extra_preflight
+  fi
 }
 
 recipe_stop() {
