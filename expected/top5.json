@@ -1,0 +1,32 @@
+[
+  {
+    "customer_id": 43,
+    "name": "Jun Nguyen",
+    "order_count": 12,
+    "lifetime_value": "1741.00"
+  },
+  {
+    "customer_id": 16,
+    "name": "Ben Martin",
+    "order_count": 8,
+    "lifetime_value": "976.45"
+  },
+  {
+    "customer_id": 3,
+    "name": "Ines Okafor",
+    "order_count": 6,
+    "lifetime_value": "952.20"
+  },
+  {
+    "customer_id": 7,
+    "name": "Ines Rossi",
+    "order_count": 6,
+    "lifetime_value": "764.95"
+  },
+  {
+    "customer_id": 42,
+    "name": "Ben Kowalski",
+    "order_count": 5,
+    "lifetime_value": "761.50"
+  }
+]
